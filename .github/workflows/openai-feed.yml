@@ -44,7 +44,6 @@ jobs:
             --seller-url "$SELLER_URL" \
             --force-https \
             --only-in-stock \
-            --require-brand \
             --exclude-regex "$EXCLUDE_REGEX"
 
       - name: Check CSV has rows

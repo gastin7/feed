@@ -227,11 +227,7 @@ def convert_item(f, a, stats):
 
     brand = first(f, "brand")
     if not brand:
-        brand = None if a.require_brand else a.default_brand
-        if brand:
-            stats["brand_defaulted"] += 1
-        else:
-            reasons.append("no_brand")
+        reasons.append("no_brand")
 
     raw_av = first(f, "availability")
     av_key = re.sub(r"[\s\-]+", "_", raw_av.strip().lower())
@@ -341,7 +337,6 @@ def run(a):
         for k in (
             "title_truncated",
             "description_truncated",
-            "brand_defaulted",
             "availability_unknown",
             "sale_price_dropped",
             "gtin_invalid_dropped",
@@ -410,9 +405,6 @@ def run(a):
         print("Notes:")
         for k, v in notes.items():
             print("   %-28s %d" % (k, v))
-    if stats["brand_defaulted"]:
-        print("WARNING: brand is empty in the feed for %d items and was replaced with %r." % (stats["brand_defaulted"], a.default_brand))
-        print("         OpenAI asks for a real brand, not a placeholder; fill in Brand in Horoshop if possible.")
     if a.convert_to:
         print("WARNING: prices converted to %s at rate %s. Use ONLY to test whether UAH is the reason for a rejection;" % (a.convert_to, a.rate))
         print("         do not run campaigns on such a feed (price on the ad will not match the site).")
@@ -447,6 +439,7 @@ SELF_TEST_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <g:image_link>https://diagnost.net.ua/content/images/2/t.jpg</g:image_link>
 <g:availability>out_of_stock</g:availability>
 <g:price>1450 UAH</g:price>
+<g:brand>B.Well</g:brand>
 <g:gtin>1234567890123</g:gtin>
 </item>
 <item>
@@ -485,6 +478,7 @@ SELF_TEST_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <g:image_link>https://diagnost.net.ua/content/images/5/d.jpg</g:image_link>
 <g:availability>in_stock</g:availability>
 <g:price>10 UAH</g:price>
+<g:brand>Dup</g:brand>
 </item>
 <item>
 <g:id>ART-006</g:id>
@@ -493,6 +487,15 @@ SELF_TEST_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <g:link>https://diagnost.net.ua/z/</g:link>
 <g:image_link>https://diagnost.net.ua/content/images/6/z.jpg</g:image_link>
 <g:availability>wait</g:availability>
+<g:price>10 UAH</g:price>
+</item>
+<item>
+<g:id>ART-007</g:id>
+<g:title>Без бренду</g:title>
+<g:description>Опис.</g:description>
+<g:link>https://diagnost.net.ua/nobrand/</g:link>
+<g:image_link>https://diagnost.net.ua/content/images/7/n.jpg</g:image_link>
+<g:availability>in_stock</g:availability>
 <g:price>10 UAH</g:price>
 </item>
 </channel>
@@ -510,7 +513,7 @@ def self_test():
         fh.write(SELF_TEST_XML)
     out = os.path.join(tmp, "out.csv")
     rej = os.path.join(tmp, "rej.csv")
-    a = build_parser().parse_args([src, "-o", out, "--rejects", rej, "--seller-name", "Diagnost", "--default-brand", "Diagnost"])
+    a = build_parser().parse_args([src, "-o", out, "--rejects", rej, "--seller-name", "Diagnost"])
     code = run(a)
     with open(out, encoding="utf-8", newline="") as fh:
         rows = list(csv.DictReader(fh))
@@ -522,7 +525,7 @@ def self_test():
     assert r1["availability"] == "in_stock" and r1["target_countries"] == "UA" and r1["store_country"] == "UA"
     assert r1["description"] == "Портативний пульсоксиметр для дому. Гарантія 12 міс.", r1["description"]
     assert r1["gtin"] == "4006381333931" and r1["is_ads_eligible"] == "true"
-    assert by_id["ART-002"]["gtin"] == "" and by_id["ART-002"]["brand"] == "Diagnost"
+    assert by_id["ART-002"]["gtin"] == "" and by_id["ART-002"]["brand"] == "B.Well"
     assert by_id["ART-002"]["availability"] == "out_of_stock" and by_id["ART-002"]["price"] == "1450.00 UAH"
     r3 = by_id["ART-003"]
     assert r3["availability"] == "pre_order" and r3["price"] == "799.50 UAH"
@@ -533,6 +536,8 @@ def self_test():
     assert "no_valid_image" in rej_rows["ART-005"] and "link_not_https" in rej_rows["ART-005"]
     assert rej_rows.get("ART-001") == "duplicate_id"
     assert "availability_bad:wait" in rej_rows["ART-006"]
+    assert "no_brand" in rej_rows["ART-007"], rej_rows
+    assert all(r["brand"] and r["brand"] != "Diagnost" for r in rows), rows
     print("\nSELF-TEST OK (files in %s)" % tmp)
     return 0
 
@@ -544,7 +549,6 @@ def build_parser():
     p.add_argument("--rejects", default="openai_feed_rejected.csv", help="report of rejected rows")
     p.add_argument("--seller-name", help="REQUIRED: store name for seller_name")
     p.add_argument("--seller-url", help="store URL for seller_url (optional)")
-    p.add_argument("--default-brand", help="brand for items without g:brand (default: value of --seller-name)")
     p.add_argument("--currency", default="UAH", help="currency if the price has no code (default UAH)")
     p.add_argument("--target-countries", default="UA", help="target_countries (default UA)")
     p.add_argument("--store-country", default="UA", help="store_country (default UA)")
@@ -558,7 +562,6 @@ def build_parser():
     p.add_argument("--in-stock-first", action="store_true", help="with --limit fill the batch with in_stock items first, then the rest")
     p.add_argument("--skus-file", help="text file with item ids (one per line); only these are processed")
     p.add_argument("--exclude-regex", help="skip items whose title matches this regex (case-insensitive), e.g. 'аналог|програматор'")
-    p.add_argument("--require-brand", action="store_true", help="reject items without g:brand instead of using --default-brand")
     p.add_argument("--ads-metadata", action="store_true", help="map g:custom_label_0..4 to ads_metadata JSON")
     p.add_argument("--return-policy-url", help="public return policy URL for return_policy")
     p.add_argument("--convert-to", help="DIAGNOSTIC ONLY: convert prices to this currency (e.g. USD), requires --rate")
@@ -574,8 +577,6 @@ def main(argv=None):
         return self_test()
     if not a.input or not a.seller_name:
         p.error("input and --seller-name are required")
-    if not a.default_brand:
-        a.default_brand = a.seller_name
     if a.convert_to and not a.rate:
         p.error("--convert-to needs --rate")
     if not re.match(r"^[A-Za-z]{2}$", a.target_countries) or not re.match(r"^[A-Za-z]{2}$", a.store_country):
