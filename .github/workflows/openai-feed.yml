@@ -1,0 +1,81 @@
+name: openai-feed
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build CSV
+        env:
+          FEED_URL: ${{ secrets.FEED_URL }}
+          SELLER_NAME: ${{ vars.SELLER_NAME || 'DIAGNOST.NET.UA' }}
+          SELLER_URL: ${{ vars.SELLER_URL || 'https://diagnost.net.ua' }}
+          EXCLUDE_REGEX: ${{ vars.EXCLUDE_REGEX || 'аналог|краш|програматор' }}
+        run: |
+          set +x
+          if [ -z "$FEED_URL" ]; then
+            echo "::error::Секрет FEED_URL не задано (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          mkdir -p site
+          python3 horoshop_to_openai_feed.py "$FEED_URL" \
+            -o site/openai_feed.csv \
+            --rejects "$RUNNER_TEMP/rejected.csv" \
+            --seller-name "$SELLER_NAME" \
+            --seller-url "$SELLER_URL" \
+            --force-https \
+            --only-in-stock \
+            --require-brand \
+            --exclude-regex "$EXCLUDE_REGEX"
+
+      - name: Check CSV has rows
+        run: |
+          rows=$(( $(wc -l < site/openai_feed.csv) - 1 ))
+          echo "Рядків товарів у CSV: $rows"
+          if [ "$rows" -lt 1 ]; then
+            echo "::error::CSV порожній, публікацію скасовано"
+            exit 1
+          fi
+
+      - name: Upload rejected report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rejected
+          path: ${{ runner.temp }}/rejected.csv
+          if-no-files-found: ignore
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
