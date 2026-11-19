@@ -180,6 +180,15 @@ def gtin_ok(g):
     return (10 - total % 10) % 10 == check
 
 
+def safe_url(u):
+    """Percent-encode '+' and spaces in the path (Horoshop image names contain '_+hash')."""
+    if not u:
+        return u
+    base, sep, rest = u.partition("?")
+    base = base.replace(" ", "%20").replace("+", "%2B")
+    return base + sep + rest
+
+
 def is_http(u):
     return bool(re.match(r"^https?://\S+$", u or "", re.I))
 
@@ -213,6 +222,8 @@ def convert_item(f, a, stats):
     if a.force_https:
         url = re.sub(r"^http://", "https://", url, flags=re.I)
         image = re.sub(r"^http://", "https://", image, flags=re.I)
+    url = safe_url(url)
+    image = safe_url(image)
     if not is_http(url):
         reasons.append("no_valid_link")
     elif not url.lower().startswith("https://"):
@@ -272,7 +283,7 @@ def convert_item(f, a, stats):
 
     cond = CONDITION.get(first(f, "condition").lower(), "")
 
-    extra_imgs = [u for u in f.get("additional_image_link", []) if is_http(u)]
+    extra_imgs = [safe_url(u) for u in f.get("additional_image_link", []) if is_http(u)]
     extra_imgs = [re.sub(r"^http://", "https://", u, flags=re.I) if a.force_https else u for u in extra_imgs]
     extra_imgs = [u.replace(",", "%2C") for u in extra_imgs]
 
@@ -420,7 +431,7 @@ SELF_TEST_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <g:title><![CDATA[Пульсоксиметр Fingertip, чорний]]></g:title>
 <g:description><![CDATA[<p>Портативний <b>пульсоксиметр</b> для дому.</p><br/>Гарантія 12 міс.]]></g:description>
 <g:link>https://diagnost.net.ua/pulsoksymetr-fingertip/</g:link>
-<g:image_link>https://diagnost.net.ua/content/images/1/pulse.jpg</g:image_link>
+<g:image_link>https://diagnost.net.ua/content/images/1/pulse_+ab12 cd.jpg</g:image_link>
 <g:additional_image_link>https://diagnost.net.ua/content/images/1/pulse-2.jpg</g:additional_image_link>
 <g:availability>in stock</g:availability>
 <g:price>1 299,00 UAH</g:price>
@@ -524,6 +535,7 @@ def self_test():
     assert r1["price"] == "1299.00 UAH" and r1["sale_price"] == "999.00 UAH", r1
     assert r1["availability"] == "in_stock" and r1["target_countries"] == "UA" and r1["store_country"] == "UA"
     assert r1["description"] == "Портативний пульсоксиметр для дому. Гарантія 12 міс.", r1["description"]
+    assert r1["image_url"] == "https://diagnost.net.ua/content/images/1/pulse_%2Bab12%20cd.jpg", r1["image_url"]
     assert r1["gtin"] == "4006381333931" and r1["is_ads_eligible"] == "true"
     assert by_id["ART-002"]["gtin"] == "" and by_id["ART-002"]["brand"] == "B.Well"
     assert by_id["ART-002"]["availability"] == "out_of_stock" and by_id["ART-002"]["price"] == "1450.00 UAH"
